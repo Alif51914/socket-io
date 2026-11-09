@@ -1,5 +1,5 @@
 # ১. বেস ইমেজ
-FROM node:18-alpine
+FROM node:20-alpine
 
 # ২. ওয়ার্কিং ডিরেক্টরি
 WORKDIR /app
