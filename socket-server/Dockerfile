@@ -1,5 +1,5 @@
 # Node.js-এর হালকা ভার্সন ব্যবহার করছি
-FROM node:18-alpine
+FROM node:20
 
 # কন্টেইনারের ভেতরে /app নামে একটি ফোল্ডার তৈরি করছি
 WORKDIR /app
