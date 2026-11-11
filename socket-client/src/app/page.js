@@ -9,7 +9,7 @@ import { Send, Image as ImageIcon, Video, Mic, Square, Smile, Edit, LogOut, Plus
 const EMOJIS = ['😀', '😂', '❤️', '👍', '🔥', '😮', '😢', '🙏'];
 
 // লোকালহোস্টের জন্য HTTP (ডিপ্লয়ের সময় এখানে .env থেকে লিংক নিতে পারিস)
-const API_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
 
 export default function Home() {
   const [connected, setConnected] = useState(false);
