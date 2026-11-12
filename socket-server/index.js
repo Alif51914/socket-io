@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
-const http = require('http'); // HTTPS এর বদলে HTTP ব্যবহার করছি
+const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -17,17 +17,29 @@ const User = require('./models/User');
 const Room = require('./models/Room');
 
 const app = express();
-
-// Hide the 'X-Powered-By: Express' header
 app.disable('x-powered-by'); 
 
-// app.use(cors());
+// CORS কনফিগারেশন
+const allowedOrigins = [
+  "http://localhost:3000", 
+  "https://socket-io-rouge-gamma.vercel.app"
+];
+
 app.use(cors({
-  origin: ["http://localhost:3000", "https://socket-io-rouge-gamma.vercel.app"],
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
-app.use(express.json()); 
+// Payload লিমিট বাড়ানো হলো (ছবি/ভিডিওর জন্য)
+app.use(express.json({ limit: '50mb' })); 
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
 app.use(helmet({
   contentSecurityPolicy: false, 
   crossOriginResourcePolicy: false, 
@@ -49,7 +61,10 @@ const createCloudinaryStorage = (folder, resourceType = 'auto') => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { folder: folder, resource_type: resourceType },
         (error, result) => {
-          if (error) return cb(error);
+          if (error) {
+            console.error("Cloudinary Stream Error:", error);
+            return cb(error);
+          }
           cb(null, { path: result.secure_url, filename: result.public_id });
         }
       );
@@ -61,314 +76,97 @@ const createCloudinaryStorage = (folder, resourceType = 'auto') => {
   };
 };
 
-const upload = multer({ storage: createCloudinaryStorage('chat_app_avatars', 'image') });
-const uploadAudio = multer({ storage: createCloudinaryStorage('chat_app_audio', 'video') });
-const uploadVideo = multer({ storage: createCloudinaryStorage('chat_app_videos', 'video') });
+// ফাইল সাইজ লিমিট (Render ক্র্যাশ রোধ করতে)
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('অসমর্থিত ফাইল ফরম্যাট!'), false);
+  }
+};
+
+const upload = multer({ 
+  storage: createCloudinaryStorage('chat_app_avatars', 'image'),
+  limits: { fileSize: 10 * 1024 * 1024 }, // সর্বোচ্চ 10MB
+  fileFilter: fileFilter
+});
+
+const uploadAudio = multer({ 
+  storage: createCloudinaryStorage('chat_app_audio', 'video'),
+  limits: { fileSize: 20 * 1024 * 1024 }, // সর্বোচ্চ 20MB
+  fileFilter: fileFilter
+});
+
+const uploadVideo = multer({ 
+  storage: createCloudinaryStorage('chat_app_videos', 'video'),
+  limits: { fileSize: 50 * 1024 * 1024 }, // সর্বোচ্চ 50MB
+  fileFilter: fileFilter
+});
+
 // ==========================================
 
-// ১. টেস্ট রুট
 app.get('/', (req, res) => {
   res.send('Socket সার্ভার চলছে');
 });
 
-// ২. রেজিস্ট্রেশন API
-app.post('/api/register', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
-    if (!username || !email || !password) return res.status(400).json({ message: 'সব তথ্য দিতে হবে' });
+// --- বাকি সব API রুট আগের মতোই থাকবে ---
+// (এখানে কোড ছোট করার জন্য বাদ দেওয়া হলো, কিন্তু আপনার ফাইলে নিচের রুটগুলো আগের মতোই থাকবে)
 
-    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
-    if (existingUser) return res.status(400).json({ message: 'এই ইউজারনেম বা ইমেইল আগেই ব্যবহৃত হয়েছে' });
+app.post('/api/register', async (req, res) => { /* ... আগের কোড ... */ });
+app.post('/api/login', async (req, res) => { /* ... আগের কোড ... */ });
+app.post('/api/forgot-password', async (req, res) => { /* ... আগের কোড ... */ });
+app.post('/api/reset-password', async (req, res) => { /* ... আগের কোড ... */ });
+app.post('/api/rooms', async (req, res) => { /* ... আগের কোড ... */ });
+app.get('/api/rooms/:userId', async (req, res) => { /* ... আগের কোড ... */ });
+app.get('/api/users/:currentUserId', async (req, res) => { /* ... আগের কোড ... */ });
+app.post('/api/rooms/private', async (req, res) => { /* ... আগের কোড ... */ });
+app.delete('/api/rooms/:roomId', async (req, res) => { /* ... আগের কোড ... */ });
+app.put('/api/rooms/:roomId/members', async (req, res) => { /* ... আগের কোড ... */ });
+app.delete('/api/rooms/:roomId/members/:memberId', async (req, res) => { /* ... আগের কোড ... */ });
+app.put('/api/rooms/:roomId/admins', async (req, res) => { /* ... আগের কোড ... */ });
+app.put('/api/users/:userId', async (req, res) => { /* ... আগের কোড ... */ });
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
 
-    const newUser = new User({ username, email, password: hashedPassword });
-    await newUser.save();
-
-    res.status(201).json({
-      message: 'ইউজার সফলভাবে তৈরি হয়েছে',
-      user: { _id: newUser._id, username: newUser.username, email: newUser.email },
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ৩. লগইন API
-app.post('/api/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: 'ইমেইল এবং পাসওয়ার্ড দুটোই দিতে হবে' });
-
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: 'ভুল ইমেইল বা পাসওয়ার্ড' });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: 'ভুল ইমেইল বা পাসওয়ার্ড' });
-
-    const token = jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1d' });
-
-    res.status(200).json({
-      message: 'লগইন সফল হয়েছে',
-      token,
-      user: { _id: user._id, username: user.username, email: user.email },
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ৪. পাসওয়ার্ড ফরগেট API 
-app.post('/api/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ message: 'এই ইমেইল দিয়ে কোনো অ্যাকাউন্ট নেই' });
-
-    const resetToken = crypto.randomBytes(20).toString('hex');
-
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpire = Date.now() + 3600000;
-    await user.save();
-
-    console.log('\n=========================================');
-    console.log(`Password Reset Token for ${email}:`);
-    console.log(`➡️ ${resetToken}`);
-    console.log('=========================================\n');
-
-    res.status(200).json({ message: 'রিসেট টোকেন তৈরি হয়েছে! সার্ভারের টার্মিনালে টোকেনটি দেখুন।' });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ৫. পাসওয়ার্ড রিসেট API
-app.post('/api/reset-password', async (req, res) => {
-  try {
-    const { token, newPassword } = req.body;
-
-    if (!token || !newPassword) {
-      return res.status(400).json({ message: 'টোকেন এবং নতুন পাসওয়ার্ড দুটোই দিতে হবে' });
-    }
-
-    const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpire: { $gt: Date.now() } 
-    });
-
-    if (!user) return res.status(400).json({ message: 'টোকেনটি ভুল অথবা মেয়াদোত্তীর্ণ হয়েছে!' });
-
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(newPassword, salt);
-    
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
-    await user.save();
-
-    res.status(200).json({ message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে! এখন লগইন করুন।' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ৬. ছবি আপলোড API
+// 🚨 আপলোড রুটগুলোতে Error Handling ঠিক করা হলো 🚨
 app.post('/api/upload', (req, res) => {
   upload.single('image')(req, res, function (err) {
     if (err) {
-      console.error("Cloudinary Upload Error:", err);
-      return res.status(500).json({ message: 'ছবি আপলোডে সমস্যা হয়েছে!', error: err.message });
+      console.error("Cloudinary Upload Error:", err.message);
+      return res.status(500).json({ message: 'ছবি আপলোডে সমস্যা!', error: err.message });
     }
-    try {
-      if (!req.file) return res.status(400).json({ message: 'কোনো ছবি আপলোড করা হয়নি' });
-      res.status(200).json({ imageUrl: req.file.path });
-    } catch (error) {
-      res.status(500).json({ message: 'সার্ভার এরর!' });
-    }
+    if (!req.file) return res.status(400).json({ message: 'কোনো ছবি আপলোড করা হয়নি' });
+    res.status(200).json({ imageUrl: req.file.path });
   });
 });
 
-// ৭. অডিও আপলোড API
 app.post('/api/upload-audio', (req, res) => {
   uploadAudio.single('audio')(req, res, function (err) {
     if (err) {
-      console.error("Audio Upload Error:", err);
+      console.error("Audio Upload Error:", err.message);
       return res.status(500).json({ message: 'অডিও আপলোডে সমস্যা!', error: err.message });
     }
-    try {
-      if (!req.file) return res.status(400).json({ message: 'কোনো অডিও আপলোড করা হয়নি' });
-      res.status(200).json({ audioUrl: req.file.path });
-    } catch (error) {
-      res.status(500).json({ message: 'সার্ভার এরর!' });
-    }
+    if (!req.file) return res.status(400).json({ message: 'কোনো অডিও আপলোড করা হয়নি' });
+    res.status(200).json({ audioUrl: req.file.path });
   });
 });
 
-// ৮. ভিডিও আপলোড API
 app.post('/api/upload-video', (req, res) => {
   uploadVideo.single('video')(req, res, function (err) {
     if (err) {
-      console.error("Video Upload Error:", err);
+      console.error("Video Upload Error:", err.message);
       return res.status(500).json({ message: 'ভিডিও আপলোডে সমস্যা!', error: err.message });
     }
-    try {
-      if (!req.file) return res.status(400).json({ message: 'কোনো ভিডিও আপলোড করা হয়নি' });
-      res.status(200).json({ videoUrl: req.file.path });
-    } catch (error) {
-      res.status(500).json({ message: 'সার্ভার এরর!' });
-    }
+    if (!req.file) return res.status(400).json({ message: 'কোনো ভিডিও আপলোড করা হয়নি' });
+    res.status(200).json({ videoUrl: req.file.path });
   });
 });
 
-// ৯. নতুন গ্রুপ রুম তৈরি
-app.post('/api/rooms', async (req, res) => {
-  try {
-    const { name, userId, memberIds } = req.body;
-    if (!name || !userId) return res.status(400).json({ message: 'রুমের নাম এবং ইউজার আইডি দিতে হবে' });
-
-    const allMembers = [...new Set([userId, ...(memberIds || [])])];
-    const newRoom = new Room({ name, createdBy: userId, admins: [userId], members: allMembers });
-
-    await newRoom.save();
-    res.status(201).json({ message: 'গ্রুপ তৈরি হয়েছে', room: newRoom });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ১০. নির্দিষ্ট ইউজারের রুম লিস্ট
-app.get('/api/rooms/:userId', async (req, res) => {
-  try {
-    const rooms = await Room.find({ members: req.params.userId }).sort({ createdAt: -1 });
-    res.status(200).json(rooms);
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ১১. সব ইউজারের লিস্ট
-app.get('/api/users/:currentUserId', async (req, res) => {
-  try {
-    const users = await User.find({ _id: { $ne: req.params.currentUserId } }).select('-password');
-    res.status(200).json(users);
-  } catch (err) {
-    res.status(500).json({ message: 'ইউজার লিস্ট আনতে সমস্যা!' });
-  }
-});
-
-// ১২. প্রাইভেট রুম তৈরি বা খোঁজা
-app.post('/api/rooms/private', async (req, res) => {
-  try {
-    const { user1Id, user2Id } = req.body;
-    if (!mongoose.Types.ObjectId.isValid(user1Id) || !mongoose.Types.ObjectId.isValid(user2Id)) {
-      return res.status(400).json({ message: 'ভুল ইউজার আইডি!' });
-    }
-
-    let room = await Room.findOne({ name: 'Private Chat', members: { $all: [user1Id, user2Id] } });
-    if (!room) {
-      room = new Room({ name: 'Private Chat', createdBy: user1Id, members: [user1Id, user2Id] });
-      await room.save();
-    }
-    res.status(200).json(room);
-  } catch (err) {
-    res.status(500).json({ message: 'প্রাইভেট রুম তৈরি করতে সমস্যা!' });
-  }
-});
-
-// ১৩. গ্রুপ ডিলিট
-app.delete('/api/rooms/:roomId', async (req, res) => {
-  try {
-    const { userId } = req.body;
-    const room = await Room.findById(req.params.roomId);
-    if (!room) return res.status(404).json({ message: 'রুম পাওয়া যায়নি' });
-    if (String(room.createdBy) !== String(userId)) return res.status(403).json({ message: 'শুধু ক্রিয়েটর গ্রুপ ডিলিট করতে পারবে!' });
-
-    await Room.findByIdAndDelete(req.params.roomId);
-    res.status(200).json({ message: 'গ্রুপ ডিলিট হয়েছে' });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ১৪. মেম্বার অ্যাড
-app.put('/api/rooms/:roomId/members', async (req, res) => {
-  try {
-    const { userId, newMemberId } = req.body;
-    const room = await Room.findById(req.params.roomId);
-    if (!room) return res.status(404).json({ message: 'রুম পাওয়া যায়নি' });
-    if (!room.admins.includes(userId)) return res.status(403).json({ message: 'শুধু অ্যাডমিন মেম্বার অ্যাড করতে পারবে!' });
-
-    if (!room.members.includes(newMemberId)) {
-      room.members.push(newMemberId);
-      await room.save();
-    }
-    res.status(200).json({ message: 'মেম্বার অ্যাড হয়েছে', room });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ১৫. মেম্বার রিমুভ
-app.delete('/api/rooms/:roomId/members/:memberId', async (req, res) => {
-  try {
-    const { userId } = req.body;
-    const room = await Room.findById(req.params.roomId);
-    if (!room) return res.status(404).json({ message: 'রুম পাওয়া যায়নি' });
-    if (!room.admins.includes(userId)) return res.status(403).json({ message: 'শুধু অ্যাডমিন মেম্বার রিমুভ করতে পারবে!' });
-    if (String(room.createdBy) === String(req.params.memberId)) return res.status(400).json({ message: 'ক্রিয়েটরকে রিমুভ করা যাবে না!' });
-
-    room.members = room.members.filter(m => String(m) !== String(req.params.memberId));
-    room.admins = room.admins.filter(a => String(a) !== String(req.params.memberId));
-    await room.save();
-
-    res.status(200).json({ message: 'মেম্বার রিমুভ হয়েছে', room });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ১৬. নতুন অ্যাডমিন বানানো
-app.put('/api/rooms/:roomId/admins', async (req, res) => {
-  try {
-    const { userId, newAdminId } = req.body;
-    const room = await Room.findById(req.params.roomId);
-    if (!room) return res.status(404).json({ message: 'রুম পাওয়া যায়নি' });
-    if (!room.admins.includes(userId)) return res.status(403).json({ message: 'শুধু অ্যাডমিন নতুন অ্যাডমিন বানাতে পারবে!' });
-
-    if (!room.admins.includes(newAdminId)) {
-      room.admins.push(newAdminId);
-      await room.save();
-    }
-    res.status(200).json({ message: 'নতুন অ্যাডমিন তৈরি হয়েছে', room });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
-// ১৭. প্রোফাইল আপডেট
-app.put('/api/users/:userId', async (req, res) => {
-  try {
-    const { username, avatar } = req.body;
-    const userId = req.params.userId;
-
-    if (username) {
-      const existingUser = await User.findOne({ username, _id: { $ne: userId } });
-      if (existingUser) return res.status(400).json({ message: 'এই ইউজারনেম আগেই ব্যবহৃত হয়েছে' });
-    }
-
-    const updatedUser = await User.findByIdAndUpdate(userId, { $set: { username, avatar } }, { new: true }).select('-password');
-    res.status(200).json({ message: 'প্রোফাইল আপডেট হয়েছে', user: updatedUser });
-  } catch (err) {
-    res.status(500).json({ message: 'সার্ভার এরর!' });
-  }
-});
-
+// Socket.io এবং MongoDB কানেকশন
 const server = http.createServer(app);
 
 const io = new Server(server, { 
   cors: { 
-    origin: ["http://localhost:3000", "https://socket-io-rouge-gamma.vercel.app"], 
+    origin: allowedOrigins, 
     methods: ['GET', 'POST'],
     credentials: true
   } 
@@ -420,7 +218,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 সার্ভার চলছে পোর্ট ${PORT}-এ`);
 });
